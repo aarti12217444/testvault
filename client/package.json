@@ -1,3 +1,4 @@
+
 {
   "name": "client",
   "version": "0.1.0",
@@ -51,5 +52,8 @@
   },
   "devDependencies": {
     "react-app-rewired": "^2.2.1"
-  }
+  },
+  "engines": {
+  "node": "18.x"
+}
 }
