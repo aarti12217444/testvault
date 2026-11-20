@@ -1,8 +1,5 @@
 const User = require('../models/User');
 const jwt = require('jsonwebtoken');
-// const { sendWelcomeEmail, sendOTPEmail } = require('../config/emailConfig');
-// Purani line — ye comment out karo
-// const { sendWelcomeEmail, sendOTPEmail } = require('../config/emailConfig');
 
 // Naya — dummy functions
 const sendWelcomeEmail = async (email, name) => console.log(`Welcome email to ${email}`);

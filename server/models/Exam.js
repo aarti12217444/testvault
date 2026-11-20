@@ -30,6 +30,25 @@ const examSchema = new mongoose.Schema({
   cameraEnabled: { type: Boolean, default: true },
   micEnabled: { type: Boolean, default: false },
 
+    // ===== EXAM PASSKEY =====
+  passkeyHash: {
+    type: String,
+    default: null,
+    select: false,
+  },
+
+  passkeyEnabled: {
+    type: Boolean,
+    default: false,
+  },
+
+  passkeyGeneratedAt: {
+    type: Date,
+    default: null,
+  },
+
+
+
   // ===== STATUS =====
   isActive: { type: Boolean, default: true },
 

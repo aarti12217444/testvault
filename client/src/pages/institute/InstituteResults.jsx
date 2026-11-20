@@ -208,10 +208,18 @@ const InstituteResults = () => {
                         {new Date(r.submittedAt || r.createdAt).toLocaleDateString('en-IN')}
                       </td>
                       <td className="px-5 py-4">
-                        <button onClick={() => navigate(`/institute/report/${studentId}`)}
-                          className="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs hover:bg-blue-700 font-medium">
-                          📊 Report Card
-                        </button>
+                        
+                            <button
+                              onClick={() =>
+                                navigate(
+                                  `/institute/report/${studentId}?examId=${r.examId?._id || r.examId}`
+                                )
+                              }
+                              className="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs hover:bg-blue-700 font-medium"
+                            >
+                              📊 Report Card
+                            </button>
+
                       </td>
                     </tr>
 

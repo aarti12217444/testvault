@@ -25,6 +25,8 @@ import Settings from './pages/Settings';
 import Leaderboard from './pages/student/Leaderboard';
 import CreateCodingExam from './pages/institute/CreateCodingExam';
 import TakeCodingExam from './pages/student/TakeCodingExam';
+import DeviceRestriction from './components/DeviceRestriction';
+import ExamLeaderboard from './pages/institute/ExamLeaderboard';
 
 
 
@@ -40,6 +42,7 @@ function App() {
   };
 
   return (
+    <DeviceRestriction>
     <BrowserRouter>
       <Toaster position="top-right" />
       <Routes>
@@ -56,6 +59,15 @@ function App() {
         <Route path="/institute/exams" element={<ProtectedRoute role="institute"><ManageExams /></ProtectedRoute>} />
         <Route path="/institute/results" element={<ProtectedRoute role="institute"><InstituteResults /></ProtectedRoute>} />
         <Route path="/institute/report/:studentId" element={<ProtectedRoute role="institute"><StudentReportCard /></ProtectedRoute>} />
+        <Route
+  path="/institute/exams/:examId/leaderboard"
+  element={
+    <ProtectedRoute role="institute">
+      <ExamLeaderboard />
+    </ProtectedRoute>
+  }
+/>
+
 
         {/* Student */}
         <Route path="/student/dashboard" element={<ProtectedRoute role="student"><StudentDashboard /></ProtectedRoute>} />
@@ -75,10 +87,12 @@ function App() {
         <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
         <Route path="/institute/coding/create" element={<CreateCodingExam />} />
         <Route path="/student/coding/:id" element={<TakeCodingExam />} />
+        <Route path="/student/coding-exams" element={<ProtectedRoute role="student"><StudentDashboard /></ProtectedRoute>} />
 
         <Route path="*" element={<Navigate to={getHome()} />} />
       </Routes>
     </BrowserRouter>
+    </DeviceRestriction>
   );
 }
 

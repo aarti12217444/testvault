@@ -4,6 +4,9 @@ const dotenv = require('dotenv');
 const connectDB = require('./config/db');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
+const mongoose = require('mongoose');
+
 
 dotenv.config();
 connectDB();
@@ -16,6 +19,8 @@ const Exam = require('./models/Exam');
 const Result = require('./models/Result');
 const Notification = require('./models/Notification');
 const CodingQuestion = require('./models/CodingQuestion');
+const generateAiAnalysis = require('./services/aiAnalysisService');
+const questionRoutes = require('./routes/questionRoutes');
 
 // Routes
 const xlsx = require('xlsx');
@@ -34,31 +39,196 @@ const { protect, authorizeRoles: allowRoles } = require('./middleware/authMiddle
 app.use('/api/proctor', proctorRoutes);
 app.use('/api/coding', codingRoutes);
 
+app.use('/api/proctor', proctorRoutes);
+app.use('/api/coding', codingRoutes);
+app.use('/api/questions', questionRoutes);
+
+
+app.post(
+  '/api/results/:resultId/ai-analysis',
+  protect,
+  allowRoles('student', 'institute'),
+  async (req, res) => {
+    try {
+      const { resultId } = req.params;
+
+      if (!mongoose.Types.ObjectId.isValid(resultId)) {
+        return res.status(400).json({
+          message: 'Invalid result ID'
+        });
+      }
+
+     const resultFilter = {
+  _id: resultId,
+  submittedAt: { $ne: null }
+};
+
+if (req.user.role === 'student') {
+  resultFilter.studentId = req.user._id;
+}
+
+if (req.user.role === 'institute') {
+  resultFilter.instituteId = req.user.instituteId;
+}
+
+const result = await Result.findOne(resultFilter)
+  .populate({
+    path: 'examId',
+    select: 'title subject class resultDeclared instituteId'
+  })
+  .populate({
+    path: 'answers.questionId',
+    select: 'section subSection subject category difficulty tags'
+  });
+
+      if (!result) {
+        return res.status(404).json({
+          message: 'Submitted result not found'
+        });
+      }
+
+      // Student can analyse only their own result.
+      if (
+        req.user.role === 'student' &&
+        String(result.studentId) !== String(req.user._id)
+      ) {
+        return res.status(403).json({
+          message: 'You can analyse only your own result'
+        });
+      }
+
+      // Institute can analyse only results from its own institute.
+      if (
+        req.user.role === 'institute' &&
+        String(result.instituteId) !== String(req.user.instituteId)
+      ) {
+        return res.status(403).json({
+          message: 'You cannot access this institute result'
+        });
+      }
+
+      // Do not analyse results before official declaration.
+      if (!result.examId?.resultDeclared) {
+        return res.status(403).json({
+          message: 'AI analysis is available after result declaration'
+        });
+      }
+
+      const answers = result.answers || [];
+      const answeredCount = answers.filter(
+        answer => answer.selectedAnswer != null
+      ).length;
+
+      const correctCount = answers.filter(
+        answer => answer.isCorrect === true
+      ).length;
+
+      const incorrectCount = answers.filter(
+        answer =>
+          answer.selectedAnswer != null &&
+          answer.isCorrect === false
+      ).length;
+
+      const topicStats = {};
+
+      for (const answer of answers) {
+        const question = answer.questionId;
+
+        if (!question) continue;
+
+        const topic =
+          question.subSection ||
+          question.section ||
+          question.subject ||
+          question.category ||
+          'Uncategorized';
+
+        if (!topicStats[topic]) {
+          topicStats[topic] = {
+            topic,
+            total: 0,
+            correct: 0,
+            incorrect: 0,
+            unanswered: 0
+          };
+        }
+
+        const stats = topicStats[topic];
+        stats.total++;
+
+        if (answer.selectedAnswer == null) {
+          stats.unanswered++;
+        } else if (answer.isCorrect === true) {
+          stats.correct++;
+        } else if (answer.isCorrect === false) {
+          stats.incorrect++;
+        }
+      }
+
+      const performanceSummary = {
+        exam: {
+          title: result.examId.title,
+          subject: result.examId.subject,
+          class: result.examId.class
+        },
+        score: result.score,
+        totalMarks: result.totalMarks,
+        percentage: result.percentage,
+        timeTakenSeconds: result.timeTaken,
+        answerStatistics: {
+          totalQuestions: answers.length,
+          answered: answeredCount,
+          correct: correctCount,
+          incorrect: incorrectCount,
+          unanswered: answers.length - answeredCount
+        },
+        topicPerformance: Object.values(topicStats),
+        difficultyPerformance: answers.reduce((acc, answer) => {
+          const difficulty =
+            answer.questionId?.difficulty || 'Unknown';
+
+          if (!acc[difficulty]) {
+            acc[difficulty] = {
+              total: 0,
+              correct: 0,
+              incorrect: 0
+            };
+          }
+
+          acc[difficulty].total++;
+
+          if (answer.isCorrect === true) {
+            acc[difficulty].correct++;
+          } else if (answer.isCorrect === false) {
+            acc[difficulty].incorrect++;
+          }
+
+          return acc;
+        }, {})
+      };
+
+      const analysis = await generateAiAnalysis(performanceSummary);
+
+      return res.json({
+        message: 'AI analysis generated successfully',
+        resultId: result._id,
+        analysis
+      });
+    } catch (err) {
+      console.error('AI result analysis error:', err);
+
+      return res.status(500).json({
+        message: 'Unable to generate AI analysis at this time'
+      });
+    }
+  }
+);
+
+
 
 // ========== HELPERS ==========
 const generateToken = (id) => jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '30d' });
 
-// const protect = async (req, res, next) => {
-//   try {
-//     let token;
-//     if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-//       token = req.headers.authorization.split(' ')[1];
-//       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-//       req.user = await User.findById(decoded.id).select('-password');
-//       return next();
-//     }
-//     return res.status(401).json({ message: 'No token' });
-//   } catch (e) {
-//     return res.status(401).json({ message: 'Token failed' });
-//   }
-// };
-
-// const allowRoles = (...roles) => (req, res, next) => {
-//   if (!req.user || !roles.includes(req.user.role)) {
-//     return res.status(403).json({ message: 'Access denied' });
-//   }
-//   return next();
-// };
 
 // ========== AUTH ROUTES ==========
 app.post('/api/auth/register', async (req, res) => {
@@ -392,13 +562,140 @@ app.get('/api/exams', protect, allowRoles('institute'), async (req, res) => {
   }
 });
 
+// Generate or regenerate exam passkey
+app.post(
+  '/api/exams/:id/generate-passkey',
+  protect,
+  allowRoles('institute'),
+  async (req, res) => {
+    try {
+      const exam = await Exam.findOne({
+        _id: req.params.id,
+        instituteId: req.user.instituteId,
+      });
+
+      if (!exam) {
+        return res.status(404).json({ message: 'Exam not found' });
+      }
+
+      // Generate a random 8-character passkey
+      const passkey = crypto
+        .randomBytes(4)
+        .toString('hex')
+        .toUpperCase();
+
+      const passkeyHash = crypto
+        .createHash('sha256')
+        .update(passkey)
+        .digest('hex');
+
+      exam.passkeyHash = passkeyHash;
+      exam.passkeyEnabled = true;
+      exam.passkeyGeneratedAt = new Date();
+
+      await exam.save();
+
+      // Show the plain passkey only in this response
+      return res.json({
+        message: 'Exam passkey generated successfully',
+        passkey,
+      });
+    } catch (err) {
+      console.error('Generate passkey error:', err);
+      return res.status(500).json({ message: err.message });
+    }
+  }
+);
+
+
 app.get('/api/exams/my-exams', protect, allowRoles('student'), async (req, res) => {
   try {
-    return res.json(await Exam.find({ assignedTo: req.user._id, isActive: true }).populate('questions'));
+    const exams = await Exam.find({
+      assignedTo: req.user._id,
+      isActive: true,
+    }).select('-questions -passkeyHash');
+
+    return res.json(exams);
   } catch (err) {
     return res.status(500).json({ message: err.message });
   }
 });
+
+//===================PASSCODE VERIFICATION========================
+
+app.post(
+  '/api/exams/:id/verify-passkey',
+  protect,
+  allowRoles('student'),
+  async (req, res) => {
+    try {
+      const passkey = String(req.body.passkey || '')
+        .trim()
+        .toUpperCase();
+
+      if (!passkey) {
+        return res.status(400).json({
+          message: 'Please enter the exam passkey',
+        });
+      }
+
+      const exam = await Exam.findOne({
+        _id: req.params.id,
+        assignedTo: req.user._id,
+        isActive: true,
+      })
+        .select('+passkeyHash')
+        .populate('questions');
+
+      if (!exam) {
+        return res.status(404).json({
+          message: 'Exam not found or not assigned to you',
+        });
+      }
+
+      if (!exam.passkeyEnabled || !exam.passkeyHash) {
+        return res.status(403).json({
+          message: 'Passkey has not been generated for this exam',
+        });
+      }
+
+      const enteredHash = crypto
+        .createHash('sha256')
+        .update(passkey)
+        .digest('hex');
+
+      const savedHash = exam.passkeyHash;
+
+      const isValid =
+        /^[a-f0-9]{64}$/i.test(savedHash) &&
+        crypto.timingSafeEqual(
+          Buffer.from(enteredHash, 'hex'),
+          Buffer.from(savedHash, 'hex')
+        );
+
+      if (!isValid) {
+        return res.status(401).json({
+          message: 'Incorrect passkey. Please try again.',
+        });
+      }
+
+      const examData = exam.toObject();
+      delete examData.passkeyHash;
+
+      return res.json({
+        message: 'Passkey verified successfully',
+        exam: examData,
+      });
+    } catch (err) {
+      console.error('Passkey verification error:', err);
+
+      return res.status(500).json({
+        message: 'Failed to verify passkey',
+      });
+    }
+  }
+);
+
 
 // ========== RESULT DECLARE ROUTE ==========
 app.post('/api/exams/:id/declare-result', protect, allowRoles('institute'), async (req, res) => {
@@ -435,48 +732,332 @@ app.post('/api/exams/:id/declare-result', protect, allowRoles('institute'), asyn
   }
 });
 
-// ========== RESULT ROUTES ==========
-app.post('/api/results/submit', protect, allowRoles('student'), async (req, res) => {
-  try {
-    const {
-      examId, answers, timeTaken,
-      submitReason, submitLabel, suspiciousLevel,
-      suspiciousDetails, activityLog
-    } = req.body;
+// ========== INDIVIDUAL EXAM LEADERBOARD ==========
+app.get(
+  '/api/exams/:examId/leaderboard',
+  protect,
+  allowRoles('institute'),
+  async (req, res) => {
+    try {
+      const { examId } = req.params;
 
-    const exam = await Exam.findById(examId).populate('questions');
-    let score = 0;
+      if (!mongoose.Types.ObjectId.isValid(examId)) {
+        return res.status(400).json({
+          message: 'Invalid exam ID',
+        });
+      }
 
-    const evaluated = answers.map(ans => {
-      const question = exam.questions.find(q => q._id.toString() === ans.questionId);
-      const isCorrect = question && question.correctAnswer === ans.selectedAnswer;
-      if (isCorrect) score++;
-      return { ...ans, isCorrect };
-    });
+      const exam = await Exam.findOne({
+        _id: examId,
+        instituteId: req.user.instituteId,
+      }).select('title subject class startTime endTime totalMarks resultDeclared resultDeclaredAt');
 
-    const percentage = ((score / exam.questions.length) * 100).toFixed(2);
+      if (!exam) {
+        return res.status(404).json({
+          message: 'Exam not found',
+        });
+      }
 
-    const result = await Result.create({
-      examId,
-      studentId: req.user._id,
-      instituteId: req.user.instituteId,
-      answers: evaluated,
-      score,
-      totalMarks: exam.totalMarks,
-      percentage,
-      timeTaken,
-      submitReason: submitReason || 'manual',
-      submitLabel: submitLabel || 'Manually Submitted',
-      suspiciousLevel: suspiciousLevel || 'none',
-      suspiciousDetails: suspiciousDetails || '',
-      activityLog: activityLog || [],
-    });
+      if (!exam.resultDeclared) {
+        return res.status(403).json({
+          message: 'Leaderboard is not available yet.',
+        });
+      }
 
-    return res.status(201).json(result);
-  } catch (err) {
-    return res.status(500).json({ message: err.message });
+      
+          const results = await Result.find({
+            examId: exam._id,
+            instituteId: req.user.instituteId,
+            submittedAt: { $ne: null },
+          })
+            .populate('studentId', 'name email')
+            .sort({ score: -1, submittedAt: 1 });
+
+
+      const leaderboard = results.map((result) => ({
+        resultId: result._id,
+        studentId: result.studentId?._id,
+        name: result.studentId?.name || 'Unknown Student',
+        email: result.studentId?.email || '',
+        score: Number(result.score || 0),
+        totalMarks: Number(result.totalMarks ?? exam.totalMarks ?? 0),
+        percentage: Number(result.percentage || 0),
+        timeTaken: Number(result.timeTaken || 0),
+        submittedAt: result.submittedAt,
+        rank: null,
+      }));
+
+      // Equal marks = equal rank; next rank skips accordingly.
+      let currentRank = 0;
+      let previousScore = null;
+
+      leaderboard.forEach((student, index) => {
+        if (student.score !== previousScore) {
+          currentRank = index + 1;
+          previousScore = student.score;
+        }
+
+        student.rank = currentRank;
+      });
+
+      return res.json({
+        exam: {
+          id: exam._id,
+          title: exam.title,
+          subject: exam.subject,
+          class: exam.class,
+          startTime: exam.startTime,
+          endTime: exam.endTime,
+          totalMarks: exam.totalMarks,
+          resultDeclaredAt: exam.resultDeclaredAt,
+        },
+        totalStudents: leaderboard.length,
+        leaderboard,
+      });
+    } catch (err) {
+      console.error('Individual leaderboard error:', err);
+
+      return res.status(500).json({
+        message: 'Failed to load exam leaderboard.',
+      });
+    }
   }
-});
+);
+
+// ========== AUTO-SAVE EXAM ANSWERS ==========
+app.put(
+  '/api/results/auto-save',
+  protect,
+  allowRoles('student'),
+  async (req, res) => {
+    try {
+      const { examId, answers } = req.body;
+
+      if (!examId || !Array.isArray(answers)) {
+        return res.status(400).json({
+          message: 'examId and answers array are required',
+        });
+      }
+
+      const exam = await Exam.findById(examId);
+
+      if (!exam) {
+        return res.status(404).json({
+          message: 'Exam not found',
+        });
+      }
+
+      const savedAnswers = answers.map((ans) => ({
+        questionId: ans.questionId,
+        selectedAnswer: ans.selectedAnswer || null,
+        isCorrect: false,
+      }));
+
+      const result = await Result.findOneAndUpdate(
+        {
+          examId,
+          studentId: req.user._id,
+          status: 'draft',
+        },
+        {
+          $set: {
+            answers: savedAnswers,
+            instituteId: req.user.instituteId,
+            timeTaken: req.body.timeTaken || 0,
+            currentQuestionIndex: Number(
+            req.body.currentQuestionIndex ?? 0
+            ),
+          },
+          $setOnInsert: {
+            score: 0,
+            totalMarks: exam.totalMarks,
+            percentage: 0,
+            status: 'draft',
+          },
+        },
+        {
+          new: true,
+          upsert: true,
+          runValidators: true,
+          setDefaultsOnInsert: true,
+        }
+      );
+
+      return res.json({
+        message: 'Answers saved successfully',
+        saved: true,
+        resultId: result._id,
+      });
+    } catch (err) {
+      console.error('Auto-save error:', err);
+
+      return res.status(500).json({
+        message: 'Failed to save answers',
+        error: err.message,
+      });
+    }
+  }
+);
+
+app.get(
+  '/api/results/draft/:examId',
+  protect,
+  allowRoles('student'),
+  async (req, res) => {
+    try {
+      const draft = await Result.findOne({
+        examId: req.params.examId,
+        studentId: req.user._id,
+        status: 'draft',
+      });
+
+      if (!draft) {
+        return res.json({
+          found: false,
+          answers: [],
+          currentQuestionIndex: 0,
+        });
+      }
+
+      return res.json({
+        found: true,
+        answers: draft.answers,
+        currentQuestionIndex: draft.currentQuestionIndex ?? 0,
+      });
+    } catch (err) {
+      console.error('Draft fetch error:', err);
+      return res.status(500).json({
+        message: 'Failed to restore exam progress',
+      });
+    }
+  }
+);
+
+
+// ========== RESULT ROUTES ==========
+
+app.post(
+  '/api/results/submit',
+  protect,
+  allowRoles('student'),
+  async (req, res) => {
+    try {
+      const {
+        examId,
+        answers,
+        timeTaken,
+        submitReason,
+        submitLabel,
+        suspiciousLevel,
+        suspiciousDetails,
+        activityLog
+      } = req.body;
+
+      if (!examId || !Array.isArray(answers)) {
+        return res.status(400).json({
+          message: 'examId and answers array are required'
+        });
+      }
+
+      const exam = await Exam.findOne({
+        _id: examId,
+        assignedTo: req.user._id,
+        isActive: true
+      }).populate('questions');
+
+      if (!exam) {
+        return res.status(404).json({
+          message: 'Exam not found or not assigned to you'
+        });
+      }
+
+      // Prevent submitting the same exam again.
+      const existingSubmitted = await Result.findOne({
+        examId,
+        studentId: req.user._id,
+        status: 'submitted'
+      });
+
+      if (existingSubmitted) {
+        return res.status(409).json({
+          message: 'This exam has already been submitted.',
+          resultId: existingSubmitted._id
+        });
+      }
+
+      let score = 0;
+
+      const evaluated = answers.map((ans) => {
+        const question = exam.questions.find(
+          q => String(q._id) === String(ans.questionId)
+        );
+
+        const isCorrect =
+          !!question &&
+          question.correctAnswer === ans.selectedAnswer;
+
+        if (isCorrect) score++;
+
+        return {
+          ...ans,
+          questionId: ans.questionId,
+          isCorrect
+        };
+      });
+
+      const totalQuestions = exam.questions.length;
+      const percentage = totalQuestions > 0
+        ? Number(((score / totalQuestions) * 100).toFixed(2))
+        : 0;
+
+      const resultData = {
+        examId,
+        studentId: req.user._id,
+        instituteId: req.user.instituteId,
+        answers: evaluated,
+        score,
+        totalMarks: exam.totalMarks,
+        percentage,
+        timeTaken: Number(timeTaken || 0),
+        submitReason: submitReason || 'manual',
+        submitLabel: submitLabel || 'Manually Submitted',
+        suspiciousLevel: suspiciousLevel || 'none',
+        suspiciousDetails: suspiciousDetails || '',
+        activityLog: activityLog || [],
+        status: 'submitted',
+        submittedAt: new Date()
+      };
+
+      // Convert the existing auto-saved draft into the final result.
+      let result = await Result.findOneAndUpdate(
+        {
+          examId,
+          studentId: req.user._id,
+          status: 'draft'
+        },
+        { $set: resultData },
+        {
+          new: true,
+          runValidators: true
+        }
+      );
+
+      // If there is no draft, create the final result.
+      if (!result) {
+        result = await Result.create(resultData);
+      }
+
+      return res.status(200).json(result);
+    } catch (err) {
+      console.error('Submit result error:', err);
+
+      return res.status(500).json({
+        message: err.message
+      });
+    }
+  }
+);
+
 
 app.get('/api/results/my-results', protect, allowRoles('student'), async (req, res) => {
   try {

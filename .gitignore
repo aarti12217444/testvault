@@ -1,1 +1,6 @@
+<<<<<<< HEAD
+=======
+node_modules/
+.env
+>>>>>>> 5ac8c1d (Update TakeExam features and improvements)
 FETCH_HEAD

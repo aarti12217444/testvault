@@ -31,12 +31,13 @@ const Sidebar = ({ onClose }) => {
   ];
 
   const studentLinks = [
-    { to: '/student/dashboard',   icon: '🏠', label: 'Dashboard' },
-    { to: '/student/results',     icon: '📊', label: 'My Results' },
-    { to: '/student/leaderboard', icon: '🏆', label: 'Leaderboard' },
-    { to: '/profile',             icon: '👤', label: 'Profile' },
-    { to: '/settings',            icon: '⚙️', label: 'Settings' },
-  ];
+  { to: '/student/dashboard',        icon: '🏠', label: 'Dashboard' },
+  { to: '/student/coding-exams',     icon: '💻', label: 'Coding Exams' },  // ✅ yeh
+  { to: '/student/results',          icon: '📊', label: 'My Results' },
+  { to: '/student/leaderboard',      icon: '🏆', label: 'Leaderboard' },
+  { to: '/profile',                  icon: '👤', label: 'Profile' },
+  { to: '/settings',                 icon: '⚙️', label: 'Settings' },
+];
 
   const links =
     user?.role === 'superadmin' ? superadminLinks :

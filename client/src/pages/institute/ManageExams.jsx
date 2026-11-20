@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-// import Sidebar from '../../components/Sidebar';
 import Layout from '../../components/Layout';
 import API from '../../api/axios';
 import toast from 'react-hot-toast';
+import { useNavigate } from 'react-router-dom';
+import * as XLSX from 'xlsx';
 
 // ✅ Predefined Section → SubSection map
 const SECTION_MAP = {
@@ -26,6 +27,10 @@ const ManageExams = () => {
   const [showForm, setShowForm] = useState(false);
   const [sectionFilter, setSectionFilter] = useState('');
   const [subSectionFilter, setSubSectionFilter] = useState('');
+  const [generatedPasskeys, setGeneratedPasskeys] = useState({});
+  const [generatingPasskeyFor, setGeneratingPasskeyFor] = useState(null);
+  const navigate = useNavigate();
+
   const [form, setForm] = useState({
     title: '', subject: '', class: '', description: '',
     duration: 30, totalMarks: 100,
@@ -46,6 +51,88 @@ const ManageExams = () => {
 
   const [declaringExam, setDeclaringExam] = useState(null);
   const [declareTime, setDeclareTime] = useState('');
+
+  const handleDownloadLeaderboard = async (exam) => {
+  try {
+    const response = await API.get(
+      `/exams/${exam._id}/leaderboard`
+    );
+
+    const { exam: examInfo, leaderboard } = response.data;
+
+    if (!leaderboard || leaderboard.length === 0) {
+      toast.error('No submitted results available for this test.');
+      return;
+    }
+
+    const rows = [
+      ['Institute Name', 'Institute'],
+      ['Batch', examInfo.class || 'N/A'],
+      ['Test Name', examInfo.title || exam.title],
+      [
+        'Test Date',
+        examInfo.startTime
+          ? new Date(examInfo.startTime).toLocaleDateString('en-IN')
+          : 'N/A'
+      ],
+      [],
+      [
+        'S.No.',
+        'Rank',
+        'Student Name',
+        'Email',
+        'Total Marks',
+        'Marks Obtained',
+        'Percentage',
+        'Time Taken (seconds)',
+        'Submission Time'
+      ],
+      ...leaderboard.map((student, index) => [
+        index + 1,
+        student.rank,
+        student.name,
+        student.email,
+        student.totalMarks,
+        student.score,
+        student.percentage,
+        student.timeTaken,
+        student.submittedAt
+          ? new Date(student.submittedAt).toLocaleString('en-IN')
+          : 'N/A'
+      ])
+    ];
+
+    const worksheet = XLSX.utils.aoa_to_sheet(rows);
+    worksheet['!cols'] = [
+      { wch: 8 },
+      { wch: 8 },
+      { wch: 25 },
+      { wch: 30 },
+      { wch: 14 },
+      { wch: 16 },
+      { wch: 14 },
+      { wch: 20 },
+      { wch: 24 }
+    ];
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(
+      workbook,
+      worksheet,
+      'Leaderboard'
+    );
+
+    const fileName = `${(examInfo.title || exam.title)
+      .replace(/[^a-z0-9]/gi, '_')}_Leaderboard.xlsx`;
+
+    XLSX.writeFile(workbook, fileName);
+    toast.success('Leaderboard downloaded!');
+  } catch (err) {
+    toast.error(
+      err.response?.data?.message || 'Failed to download leaderboard'
+    );
+  }
+};
 
   const handleDeclareResult = async (examId, scheduled = false) => {
     try {
@@ -143,9 +230,45 @@ const ManageExams = () => {
     });
   };
 
-  const attempted = (exam) => results.filter(r =>
-    r.examId === exam._id || r.examId?._id === exam._id
-  ).length;
+  // const attempted = (exam) => results.filter(r =>
+  //   r.examId === exam._id || r.examId?._id === exam._id
+  // ).length;
+
+  
+const handleGeneratePasskey = async (examId) => {
+  try {
+    setGeneratingPasskeyFor(examId);
+
+    const response = await API.post(
+      `/exams/${examId}/generate-passkey`
+    );
+
+    const newPasskey = response.data.passkey;
+
+    setGeneratedPasskeys((prev) => ({
+      ...prev,
+      [examId]: newPasskey,
+    }));
+
+    toast.success('Exam passkey generated successfully!');
+  } catch (err) {
+    toast.error(
+      err.response?.data?.message || 'Failed to generate passkey'
+    );
+  } finally {
+    setGeneratingPasskeyFor(null);
+  }
+};
+
+const handleCopyPasskey = async (passkey) => {
+  try {
+    await navigator.clipboard.writeText(passkey);
+    toast.success('Passkey copied!');
+  } catch (err) {
+    toast.error('Could not copy passkey. Please copy it manually.');
+  }
+};
+
 
   return (
     <div className="flex">
@@ -349,7 +472,7 @@ const ManageExams = () => {
           {exams.length === 0 && <p className="text-gray-400 col-span-3">No exams created yet.</p>}
           {exams.map(exam => {
             const status = getExamStatus(exam);
-            const attemptedCount = attempted(exam);
+            // const attemptedCount = attempted(exam);
             return (
               <div key={exam._id} className="bg-white rounded-xl shadow p-5 hover:shadow-md transition">
                 <div className="flex justify-between items-start mb-2">
@@ -358,11 +481,58 @@ const ManageExams = () => {
                     {status.label}
                   </span>
                 </div>
-                <p className="text-sm text-gray-500">{exam.subject} {exam.class && `• ${exam.class}`}</p>
+                <p className="text-sm text-gray-500">
+                  {exam.subject} {exam.class && `• ${exam.class}`}
+                </p>
+                
+                {/* Exam Passkey */}
+                <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50 p-4">
+                  <h4 className="font-semibold text-slate-800">
+                    🔐 Exam Passkey
+                  </h4>
 
-                <div className="mt-3 space-y-1 text-sm text-gray-600">
-                  <p>⏱ {exam.duration} mins • 📝 {exam.questions?.length || 0} Qs • 🎯 {exam.totalMarks} marks</p>
-                  <p>👨‍🎓 Assigned: {exam.assignedTo?.length || 0} • ✅ Attempted: {attemptedCount}</p>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Generate a passkey and share it manually with assigned students.
+                  </p>
+
+                  <button
+                    type="button"
+                    onClick={() => handleGeneratePasskey(exam._id)}
+                    disabled={generatingPasskeyFor === exam._id}
+                    className="mt-3 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {generatingPasskeyFor === exam._id
+                      ? 'Generating...'
+                      : generatedPasskeys[exam._id]
+                        ? 'Regenerate Passkey'
+                        : 'Generate Passkey'}
+                  </button>
+
+                  {generatedPasskeys[exam._id] && (
+                    <div className="mt-3 rounded-lg border border-blue-200 bg-white p-3">
+                      <p className="text-xs text-slate-500">
+                        Share this passkey with your students:
+                      </p>
+
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <code className="rounded bg-slate-100 px-3 py-2 font-bold tracking-widest text-slate-800">
+                          {generatedPasskeys[exam._id]}
+                        </code>
+
+                        <button
+                          type="button"
+                          onClick={() => handleCopyPasskey(generatedPasskeys[exam._id])}
+                          className="rounded-lg bg-slate-800 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700"
+                        >
+                          Copy Passkey
+                        </button>
+                      </div>
+
+                      <p className="mt-2 text-xs text-amber-700">
+                        Regenerating the passkey will invalidate the previous one.
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 {/* Schedule Info */}
@@ -373,13 +543,30 @@ const ManageExams = () => {
                   </div>
                 )}
 
-                {/* Settings Icons */}
-                <div className="mt-3 flex gap-2 flex-wrap">
-                  {exam.shuffleQuestions && <span className="text-xs bg-purple-50 text-purple-600 px-2 py-0.5 rounded">🔀 Shuffle Q</span>}
-                  {exam.shuffleOptions && <span className="text-xs bg-purple-50 text-purple-600 px-2 py-0.5 rounded">🔀 Shuffle Opt</span>}
-                  {exam.cameraEnabled && <span className="text-xs bg-orange-50 text-orange-600 px-2 py-0.5 rounded">📷 Camera</span>}
-                  {exam.micEnabled && <span className="text-xs bg-orange-50 text-orange-600 px-2 py-0.5 rounded">🎤 Mic</span>}
-                </div>
+                {/* Leaderboard Actions */}
+{exam.resultDeclared && (
+  <div className="mt-4 flex items-center justify-between gap-3 border-t pt-3">
+    <button
+      type="button"
+      onClick={() =>
+        navigate(`/institute/exams/${exam._id}/leaderboard`)
+      }
+      className="text-sm font-semibold text-indigo-600 hover:text-indigo-800"
+    >
+      🏆 View Leaderboard →
+    </button>
+
+    <button
+      type="button"
+      onClick={() => handleDownloadLeaderboard(exam)}
+      className="flex items-center gap-1 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm font-medium text-green-700 hover:bg-green-100"
+      title="Download Excel"
+    >
+      <icon name="file-spreadsheet" size="sm" />
+      Excel
+    </button>
+  </div>
+)}
 
                 {/* Result Declaration */}
                 <div className="mt-4 border-t pt-3">

@@ -217,5 +217,21 @@ router.post('/submit', protect, authorizeRoles('student'), async (req, res) => {
   }
 });
 
+// ── GET /api/coding/my-questions — Student ke liye same institute ki questions
+router.get('/my-questions', protect, authorizeRoles('student'), async (req, res) => {
+  try {
+    // Student ke user object mein instituteId hoga
+    const questions = await CodingQuestion.find({ 
+      instituteId: req.user.instituteId 
+    })
+    .select('-testCases') // test cases student ko nahi dikhenge list mein
+    .sort({ createdAt: -1 });
+
+    res.json(questions);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 module.exports = router;
 // module.exports = { protect, authorizeRoles };

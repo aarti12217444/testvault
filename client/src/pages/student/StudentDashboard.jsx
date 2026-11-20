@@ -9,12 +9,14 @@ const StudentDashboard = () => {
   const { user } = useAuth();
   const [exams, setExams] = useState([]);
   const [results, setResults] = useState([]);
+  const [codingExams, setCodingExams] = useState([]); 
   const [now, setNow] = useState(new Date());
   const navigate = useNavigate();
 
   useEffect(() => {
     API.get('/exams/my-exams').then(r => setExams(r.data));
     API.get('/results/my-results').then(r => setResults(r.data));
+    API.get('/coding/my-questions').then(r => setCodingExams(r.data)).catch(() => setCodingExams([]));
     // Every minute update current time for live status
     const timer = setInterval(() => setNow(new Date()), 60000);
     return () => clearInterval(timer);
@@ -165,6 +167,33 @@ const StudentDashboard = () => {
       </div>
     );
   };
+  const CodingExamCard = ({ exam }) => {
+  return (
+    <div className="bg-white rounded-xl shadow p-6 hover:shadow-md transition border-2 border-purple-300">
+      <div className="flex justify-between items-start mb-2">
+        <h3 className="font-bold text-gray-800 text-base flex-1 pr-2">{exam.title}</h3>
+        <span className="bg-purple-100 text-purple-700 text-xs px-2 py-1 rounded-full font-medium whitespace-nowrap">💻 Coding</span>
+      </div>
+      <p className="text-gray-500 text-sm">{exam.description?.slice(0, 60)}...</p>
+      <div className="flex justify-between items-center mt-3">
+        <span className={`text-xs px-2 py-1 rounded-full font-medium ${
+          exam.difficulty === 'Easy' ? 'bg-green-100 text-green-700' :
+          exam.difficulty === 'Medium' ? 'bg-yellow-100 text-yellow-700' :
+          'bg-red-100 text-red-700'
+        }`}>{exam.difficulty}</span>
+        <span className="text-sm text-green-600">🎯 {exam.marks} marks</span>
+        <span className="text-sm text-blue-600">⏱ {exam.timeLimit}s</span>
+      </div>
+      <div className="mt-4">
+        <button
+          onClick={() => navigate(`/student/coding/${exam._id}`)}
+          className="w-full bg-purple-600 text-white py-2 rounded-lg hover:bg-purple-700 text-sm font-medium">
+          Start Coding →
+        </button>
+      </div>
+    </div>
+  );
+};
 
   return (
     <div className="flex">
@@ -219,6 +248,16 @@ const StudentDashboard = () => {
             </div>
           </div>
         )}
+
+        {/* Coding Exams */}
+{codingExams.length > 0 && (
+  <div className="mb-8">
+    <h3 className="text-lg font-semibold text-gray-700 mb-4">💻 Coding Exams ({codingExams.length})</h3>
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+      {codingExams.map(exam => <CodingExamCard key={exam._id} exam={exam} />)}
+    </div>
+  </div>
+)}
       </main>
     </div>
   );
